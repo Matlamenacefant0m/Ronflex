@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Journal du sommeil sonore</title>
+<style>
+:root{--bg:#f6f7fb;--card:#fff;--tx:#1b1f2a;--mu:#6b7280;--ac:#4f6bed;--ok:#16a34a;--wa:#d97706;--ko:#dc2626;--bd:#e5e7eb;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1220;--card:#181c2e;--tx:#e8eaf2;--mu:#9aa1b5;--bd:#2a3050;--ac:#7f95ff}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 system-ui,sans-serif;max-width:640px;margin:auto;padding:14px}
+h1{font-size:19px;margin:4px 0 12px}.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:12px}
+button{font:inherit;border:0;border-radius:10px;padding:10px 16px;background:var(--ac);color:#fff;cursor:pointer}
+button.g{background:transparent;color:var(--ac);border:1px solid var(--bd)}button.r{background:var(--ko)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}.mu{color:var(--mu);font-size:13px}
+.sc{font-weight:700;font-size:22px}.nt{cursor:pointer}.big{font-size:34px;font-weight:700}
+.clip{padding:8px 0;border-top:1px solid var(--bd)}input[type=range]{width:100%}.sv{overflow-x:auto}
+</style></head><body>
+<h1>🌙 Journal du sommeil sonore</h1>
+<div id="rec" class="card"></div>
+<div id="view"></div>
+<script>
+const $=s=>document.querySelector(s);let db;
+const open=()=>new Promise((res,rej)=>{const r=indexedDB.open('ronfle',1);r.onupgradeneeded=()=>{const d=r.result;d.createObjectStore('nights',{keyPath:'id'});d.createObjectStore('clips',{autoIncrement:true}).createIndex('n','night')};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+const tx=(s,m,f)=>new Promise((res,rej)=>{const t=db.transaction(s,m),o=t.objectStore(s),q=f(o);t.oncomplete=()=>res(q&&q.result);t.onerror=()=>rej(t.error)});
+const fmt=s=>{const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h+' h '+String(m).padStart(2,'0')};
+const pct=(a,p)=>{const b=[...a].sort((x,y)=>x-y);return b[Math.floor(b.length*p)]||0};
+let st=null; // état d'enregistrement
+function analyse(n,thr){const L=n.levels,len=L.length;if(len<30)return{score:null,len,snore:0,pauses:[],T:0,floor:0};
+ const floor=pct(L,.2),T=floor+thr,ev=[];let ss=0,ex=0;
+ L.forEach((v,i)=>{if(v>T){ev.push(i);ss++;ex+=v-floor}});
+ const pauses=[];for(let k=1;k<ev.length;k++){const g=ev[k]-ev[k-1];if(g>=20&&g<=180)pauses.push({t:ev[k-1],d:g})}
+ const h=len/3600,idx=pauses.length/Math.max(h,.5),sp=ss/len,me=ss?ex/ss:0;
+ const pen=Math.min(40,sp*120)+Math.min(25,Math.max(0,me-10))+Math.min(35,idx*3);
+ return{score:Math.max(0,Math.round(100-pen)),len,snore:ss,pauses,T,floor,idx,me,L}}
+const col=s=>s==null?'var(--mu)':s>=75?'var(--ok)':s>=50?'var(--wa)':'var(--ko)';
+function liveUI(){$('#rec').innerHTML=st?`<div class="row"><div><div class="big" id="lv">--</div><div class="mu">dB relatifs · <span id="el"></span></div></div><button class="r" onclick="stop()">Arrêter</button></div><p class="mu">Posez le téléphone près du lit, branché, écran allumé (cette page doit rester ouverte).</p>`:`<div class="row"><div><b>Nouvelle nuit</b><div class="mu">Micro seul, rien n'est envoyé ailleurs.</div></div><button onclick="start()">● Démarrer</button></div>`}
+async function start(){try{if(!navigator.mediaDevices)throw new Error('accès micro bloqué par la page hôte');const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+ const ctx=new AudioContext(),an=ctx.createAnalyser();an.fftSize=2048;ctx.createMediaStreamSource(stream).connect(an);
+ let wl=null;try{wl=await navigator.wakeLock.request('screen')}catch(e){}
+ const n={id:Date.now(),start:Date.now(),levels:[]};st={stream,ctx,an,n,wl,buf:new Float32Array(2048),mx:0,tick:0,peak:0,segT:0};liveUI();
+ st.iv=setInterval(loop,250);seg();}catch(e){st=null;liveUI();$('#rec').insertAdjacentHTML('beforeend','<p style="color:var(--ko)">Micro indisponible : '+(e.name||'')+' '+e.message+'. Ouvrez le lien directement dans le navigateur (pas dans l\'aperçu du chat) et autorisez le micro.</p>')}}
+function loop(){const s=st;s.an.getFloatTimeDomainData(s.buf);let q=0;for(const v of s.buf)q+=v*v;const d=Math.max(0,20*Math.log10(Math.sqrt(q/s.buf.length)+1e-9)+90);
+ s.mx=Math.max(s.mx,d);s.peak=Math.max(s.peak,d);if(++s.tick%4==0){s.n.levels.push(+s.mx.toFixed(1));$('#lv').textContent=Math.round(s.mx);$('#el').textContent=fmt(s.n.levels.length);s.mx=0;
+ if(s.n.levels.length%300==0)tx('nights','readwrite',o=>o.put(s.n))}}
+function seg(){const s=st;if(!s)return;const ch=[],r=new MediaRecorder(s.stream),t0=Date.now()-s.n.start;s.peak=0;
+ r.ondataavailable=e=>ch.push(e.data);
+ r.onstop=()=>{const rec=s.n.levels.slice(-60),thr=pct(s.n.levels.slice(-900),.2)+10;if(s.peak>thr)tx('clips','readwrite',o=>o.add({night:s.n.id,t:Math.round(t0/1000),peak:Math.round(s.peak),blob:new Blob(ch,{type:r.mimeType})}));if(st===s)seg();else s.done&&s.done()};
+ r.start();s.rec=r;s.to=setTimeout(()=>r.state=='recording'&&r.stop(),60000)}
+async function stop(){const s=st;clearInterval(s.iv);clearTimeout(s.to);await new Promise(r=>{s.done=r;st=null;try{s.rec.stop()}catch(e){r()}});
+ s.n.end=Date.now();await tx('nights','readwrite',o=>o.put(s.n));s.stream.getTracks().forEach(t=>t.stop());s.ctx.close();s.wl&&s.wl.release().catch(()=>{});liveUI();list()}
+async function list(){const ns=(await tx('nights','readonly',o=>o.getAll())).sort((a,b)=>b.id-a.id);
+ $('#view').innerHTML=ns.length?ns.map(n=>{const a=analyse(n,10);return`<div class="card nt" onclick="detail(${n.id})"><div class="row"><div><b>${new Date(n.start).toLocaleDateString('fr-FR',{weekday:'short',day:'numeric',month:'short'})}</b><div class="mu">${fmt(a.len)} · ronflement ${a.len?Math.round(a.snore/a.len*100):0}% · ${a.pauses?a.pauses.length:0} pause(s)</div></div><div class="sc" style="color:${col(a.score)}">${a.score??'–'}</div></div></div>`}).join(''):'<p class="mu">Aucune nuit enregistrée.</p>'}
+let au=new Audio(),cur=null;
+async function detail(id,thr=10){const n=await tx('nights','readonly',o=>o.get(id)),cl=(await tx('clips','readonly',o=>o.index('n').getAll(id))).sort((a,b)=>b.peak-a.peak),a=analyse(n,thr);
+ const hrs=Math.ceil(a.len/3600)||1,hb=Array(hrs).fill(0);(a.L||[]).forEach((v,i)=>{if(v>a.T)hb[Math.floor(i/3600)]+=1/60});
+ const mxh=Math.max(10,...hb),W=560,H=110;
+ const bars=hb.map((v,i)=>{const w=W/hrs,h=v/mxh*(H-22);return`<rect x="${i*w+3}" y="${H-16-h}" width="${w-6}" height="${h}" rx="3" fill="var(--ac)"/><text x="${i*w+w/2}" y="${H-3}" font-size="10" text-anchor="middle" fill="var(--mu)">${new Date(n.start+i*3600e3).getHours()}h</text><text x="${i*w+w/2}" y="${H-19-h}" font-size="10" text-anchor="middle" fill="var(--mu)">${Math.round(v)}</text>`}).join('');
+ let tl='';if(a.L){const st2=Math.max(1,Math.floor(a.len/560)),pts=[];for(let i=0;i<a.len;i+=st2){pts.push((i/a.len*W).toFixed(1)+','+(90-Math.min(90,Math.max(...a.L.slice(i,i+st2))/90*90)).toFixed(1))}
+ tl=`<polyline points="${pts.join(' ')}" fill="none" stroke="var(--ac)" stroke-width="1"/><line x1="0" x2="${W}" y1="${90-a.T}" y2="${90-a.T}" stroke="var(--wa)" stroke-dasharray="4"/>`+a.pauses.map(p=>`<rect x="${p.t/a.len*W}" y="0" width="${Math.max(2,p.d/a.len*W)}" height="90" fill="var(--ko)" opacity=".5"/>`).join('')}
+ $('#view').innerHTML=`<button class="g" onclick="list()">← Nuits</button> <button class="g" onclick="del(${id})">Supprimer</button>
+ <div class="card"><div class="row"><b>${new Date(n.start).toLocaleString('fr-FR',{dateStyle:'long',timeStyle:'short'})}</b><span class="sc" style="color:${col(a.score)}">${a.score??'–'}/100</span></div>
+ <div class="mu">Durée ${fmt(a.len)} · ronflement ${a.len?Math.round(a.snore/a.len*100):0}% · niveau moyen +${Math.round(a.me||0)} dB · ${a.pauses.length} pause(s) ≥20 s (≈${(a.idx||0).toFixed(1)}/h)</div></div>
+ <div class="card"><b>Minutes de ronflement par heure</b><div class="sv"><svg viewBox="0 0 ${W} ${H}" width="100%">${bars}</svg></div>
+ <b>Chronologie dB</b> <span class="mu">(rouge = pauses)</span><svg viewBox="0 0 ${W} 90" width="100%">${tl}</svg>
+ <label class="mu">Sensibilité : seuil = bruit de fond + ${thr} dB<input type="range" min="4" max="25" value="${thr}" onchange="detail(${id},+this.value)"></label></div>
+ <div class="card"><b>Extraits audio (les plus forts d'abord)</b>${cl.length?cl.slice(0,40).map((c,i)=>`<div class="clip row"><div>${new Date(n.start+c.t*1000).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})} <span class="mu">· pic ${c.peak} dB · 1 min</span></div><button class="g" id="p${i}" onclick="play(${i},${c.t},${id})">▶</button></div>`).join(''):'<p class="mu">Aucun extrait.</p>'}</div>
+ <p class="mu">Outil indicatif, pas un dispositif médical. En cas de pauses répétées ou de fatigue, parlez-en à un médecin.</p>`;
+ window._cl=cl}
+async function play(i,t,id){const c=window._cl[i],b=$('#p'+i);if(cur===i&&!au.paused){au.pause();b.textContent='▶';return}
+ document.querySelectorAll('[id^=p]').forEach(x=>x.textContent='▶');au.pause();au=new Audio(URL.createObjectURL(c.blob));cur=i;au.onended=()=>b.textContent='▶';await au.play().catch(e=>{b.textContent='✖'});b.textContent='⏸'}
+async function del(id){await tx('nights','readwrite',o=>o.delete(id));const ks=await tx('clips','readonly',o=>o.index('n').getAllKeys(id));await tx('clips','readwrite',o=>ks.forEach(k=>o.delete(k)));list()}
+open().then(d=>{db=d;liveUI();list()}).catch(e=>{$('#view').textContent='Stockage indisponible : '+e})
+</script></body></html>
